@@ -603,15 +603,38 @@ if st.session_state.df is not None:
             if date_col:
                 min_date = df[date_col].min().date()
                 max_date = df[date_col].max().date()
-                date_range = st.date_input(
-                    "Rentang Tanggal",
-                    value=(min_date, max_date),
-                    min_value=min_date,
-                    max_value=max_date
-                )
-                if len(date_range) == 2:
-                    df = df[(df[date_col].dt.date >= date_range[0]) & 
-                           (df[date_col].dt.date <= date_range[1])]
+                
+                st.markdown("**Rentang Tanggal**")
+                col_start, col_end = st.columns(2)
+                
+                with col_start:
+                    start_date = st.date_input(
+                        "Dari",
+                        value=min_date,
+                        min_value=min_date,
+                        max_value=max_date,
+                        key="start_date",
+                        help="Tanggal mulai"
+                    )
+                
+                with col_end:
+                    end_date = st.date_input(
+                        "Sampai",
+                        value=max_date,
+                        min_value=min_date,
+                        max_value=max_date,
+                        key="end_date",
+                        help="Tanggal selesai"
+                    )
+                
+                # Validate and filter
+                if start_date > end_date:
+                    st.error("❌ Tanggal mulai harus ≤ tanggal selesai")
+                else:
+                    df = df[(df[date_col].dt.date >= start_date) & 
+                           (df[date_col].dt.date <= end_date)]
+                    days_diff = (end_date - start_date).days + 1
+                    st.caption(f"📅 {days_diff} hari data")
     
     # Numeric filters
     numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
