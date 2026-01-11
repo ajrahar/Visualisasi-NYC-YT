@@ -1,0 +1,12 @@
+streamlit==1.31.0
+pandas==2.2.0
+numpy==1.26.3
+plotly==5.18.0
+matplotlib==3.8.2
+seaborn==0.13.1
+gdown==4.7.1
+openpyxl==3.1.2
+statsmodels==0.14.1
+requests==2.32.5
+urllib3==1.26.18
+pyarrow==14.0.1
