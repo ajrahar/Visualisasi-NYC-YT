@@ -148,8 +148,8 @@ with st.sidebar:
     # File loading mode
     load_mode = st.radio(
         "Mode Loading",
-        ["Single File (Google Drive)", "Multiple Files (Upload Langsung)"],
-        help="Pilih single file untuk 1 file dari Google Drive, atau multiple files untuk upload beberapa file sekaligus"
+        ["Single File (Google Drive)", "Single File (Upload Lokal)", "Multiple Files (Upload Langsung)"],
+        help="Pilih cara memuat data: dari Google Drive, upload 1 file lokal, atau upload beberapa file sekaligus"
     )
     
     if load_mode == "Single File (Google Drive)":
@@ -167,6 +167,33 @@ with st.sidebar:
         
         load_button = st.button("📥 Muat Data", type="primary", use_container_width=True)
         uploaded_files = None
+        single_uploaded_file = None
+        
+    elif load_mode == "Single File (Upload Lokal)":
+        st.info("📂 **Upload File dari Komputer Anda**")
+        st.markdown("""
+        **Cara menggunakan:**
+        1. Klik tombol "Browse files" di bawah
+        2. Pilih 1 file dari komputer Anda
+        3. File akan otomatis dimuat
+        4. Cocok untuk file yang sudah ada di komputer
+        """)
+        
+        single_uploaded_file = st.file_uploader(
+            "Upload File (CSV, Parquet, atau Excel)",
+            type=["csv", "parquet", "xlsx", "xls"],
+            accept_multiple_files=False,
+            help="Pilih 1 file dari komputer Anda"
+        )
+        
+        load_button = False
+        gdrive_url = ""
+        file_format = "parquet"
+        uploaded_files = None
+        
+        if single_uploaded_file:
+            st.success(f"✅ File siap dimuat: {single_uploaded_file.name}")
+            st.write(f"📊 Ukuran: {single_uploaded_file.size / 1024 / 1024:.2f} MB")
     else:
         st.info("📂 **Upload Multiple Files untuk Auto-Merge**")
         st.markdown("""
@@ -303,6 +330,47 @@ if load_button and gdrive_url:
         df = prepare_taxi_data(df)
         df = apply_data_mappings(df)
         st.session_state.df = df
+        st.session_state.data_period = None  # Reset period for Google Drive files
+elif single_uploaded_file is not None:
+    # Process single uploaded file from local
+    try:
+        st.info(f"🔄 Memuat file: {single_uploaded_file.name}")
+        
+        # Read file based on extension
+        if single_uploaded_file.name.endswith('.csv'):
+            df = pd.read_csv(single_uploaded_file)
+        elif single_uploaded_file.name.endswith('.parquet'):
+            df = pd.read_parquet(single_uploaded_file)
+        elif single_uploaded_file.name.endswith(('.xlsx', '.xls')):
+            df = pd.read_excel(single_uploaded_file)
+        else:
+            st.error("❌ Format file tidak didukung")
+            df = None
+        
+        if df is not None:
+            # Apply data preparation and mappings
+            df = prepare_taxi_data(df)
+            df = apply_data_mappings(df)
+            st.session_state.df = df
+            
+            # Auto-detect period
+            datetime_cols = df.select_dtypes(include=['datetime64']).columns.tolist()
+            if datetime_cols:
+                first_col = datetime_cols[0]
+                min_date = df[first_col].min()
+                max_date = df[first_col].max()
+                st.session_state.data_period = {
+                    'type': 'auto_detected',
+                    'start_date': min_date,
+                    'end_date': max_date,
+                    'column': first_col
+                }
+            
+            st.success(f"✅ File berhasil dimuat!")
+            st.info(f"📊 Total data: {len(df):,} baris dan {len(df.columns)} kolom")
+            
+    except Exception as e:
+        st.error(f"❌ Error saat memuat file: {str(e)}")
 elif use_sample:
     # Create sample data for demonstration
     np.random.seed(42)
@@ -630,8 +698,34 @@ if st.session_state.df is not None:
         if 'trip_distance' in df.columns:
             st.markdown("**Jarak Perjalanan**")
             st.caption("Seberapa jauh biasanya orang naik taxi? (dalam mil, 1 mil ≈ 1.6 km)")
+            
+            # Data quality check
+            zero_count = (df['trip_distance'] == 0).sum()
+            total_count = len(df)
+            zero_pct = zero_count / total_count * 100
+            
+            # Option to filter outliers
+            col_filter1, col_filter2 = st.columns([3, 1])
+            with col_filter1:
+                if zero_pct > 5:
+                    st.warning(f"⚠️ Terdeteksi **{zero_count:,} trips ({zero_pct:.1f}%)** dengan jarak = 0")
+            with col_filter2:
+                filter_outliers = st.checkbox("Filter Outliers", value=True, key="filter_distance")
+            
+            # Filter data for better visualization
+            if filter_outliers:
+                # Remove zero and extreme outliers (> 99th percentile)
+                df_filtered = df[df['trip_distance'] > 0].copy()
+                percentile_99 = df_filtered['trip_distance'].quantile(0.99)
+                df_filtered = df_filtered[df_filtered['trip_distance'] <= percentile_99]
+                
+                st.caption(f"📊 Menampilkan {len(df_filtered):,} dari {total_count:,} trips (filter: jarak > 0 dan ≤ {percentile_99:.1f} mil)")
+            else:
+                df_filtered = df.copy()
+                st.caption(f"📊 Menampilkan semua {total_count:,} trips")
+            
             fig = px.histogram(
-                df,
+                df_filtered,
                 x='trip_distance',
                 nbins=50,
                 title='',
@@ -641,9 +735,14 @@ if st.session_state.df is not None:
             fig.update_layout(bargap=0.05, showlegend=False)
             st.plotly_chart(fig, use_container_width=True)
             
-            # Add insight
-            median_distance = df['trip_distance'].median()
-            st.info(f"ℹ️ Jarak tengah (median): **{median_distance:.2f} mil** (~{median_distance*1.6:.2f} km)")
+            # Add insights
+            col_insight1, col_insight2 = st.columns(2)
+            with col_insight1:
+                median_distance = df_filtered['trip_distance'].median()
+                st.info(f"ℹ️ Jarak tengah (median): **{median_distance:.2f} mil** (~{median_distance*1.6:.2f} km)")
+            with col_insight2:
+                if zero_pct > 5:
+                    st.warning(f"⚠️ **{zero_pct:.1f}%** data memiliki jarak = 0")
     
     with tab2:
         st.subheader("Analisis Time Series")
